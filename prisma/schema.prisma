@@ -1,0 +1,233 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model ImportBatch {
+  id                 String               @id @default(cuid())
+  fileName           String
+  storagePath        String?
+  importedAt         DateTime             @default(now())
+  salesOrders        SalesOrder[]
+  settlements        Settlement[]
+  purchaseCosts      PurchaseCost[]
+  goals              GoalTarget[]
+  adSpends           AdSpend[]
+  costMasters        ProductCostMaster[]
+  inventoryPositions InventoryPosition[]
+  monthlyTargets     MonthlyTarget[]
+  channelFeeRules    ChannelFeeRule[]
+  mediaSources       MediaSource[]
+
+  @@index([importedAt])
+}
+
+model SalesOrder {
+  id            String      @id @default(cuid())
+  batchId       String
+  batch         ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  channel       String
+  orderId       String
+  orderDate     DateTime?
+  monthKey      String
+  status        String
+  productName   String
+  color         String
+  category      String
+  qty           Int
+  consumerPrice Decimal     @db.Decimal(18, 2)
+  address       String
+
+  @@index([batchId])
+  @@index([monthKey])
+  @@index([channel])
+  @@index([category])
+}
+
+model Settlement {
+  id               String      @id @default(cuid())
+  batchId          String
+  batch            ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  partner          String
+  settledAt        DateTime?
+  settlementId     String
+  transactionType  String
+  productName      String
+  color            String
+  category         String
+  grossSales       Decimal     @db.Decimal(18, 2)
+  fee              Decimal     @db.Decimal(18, 2)
+  adjustment       Decimal     @db.Decimal(18, 2)
+  settlementAmount Decimal     @db.Decimal(18, 2)
+  qty              Int
+  isMatched        Boolean     @default(false)
+  cancelType       String
+
+  @@index([batchId])
+  @@index([category])
+}
+
+model PurchaseCost {
+  id           String      @id @default(cuid())
+  batchId      String
+  batch        ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  accountType  String
+  fiscalYear   String
+  purchaseDate DateTime?
+  vendor       String
+  item         String
+  qty          Int
+  supplyCost   Decimal     @db.Decimal(18, 2)
+  totalWithVat Decimal     @db.Decimal(18, 2)
+  paid         Boolean     @default(false)
+  note         String
+
+  @@index([batchId])
+}
+
+model GoalTarget {
+  id               String      @id @default(cuid())
+  batchId          String
+  batch            ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  scope            GoalScope
+  label            String
+  targetRevenue    Decimal     @db.Decimal(18, 2)
+  targetMarginRate Decimal?    @db.Decimal(8, 4)
+
+  @@index([batchId])
+  @@unique([batchId, scope, label])
+}
+
+model AdSpend {
+  id        String      @id @default(cuid())
+  batchId   String
+  batch     ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  channel   String
+  media     String
+  monthKey  String
+  spend     Decimal     @db.Decimal(18, 2)
+  memo      String?
+  createdAt DateTime    @default(now())
+
+  @@index([batchId])
+  @@index([channel])
+  @@index([media])
+  @@index([monthKey])
+}
+
+model ProductCostMaster {
+  id            String      @id @default(cuid())
+  batchId       String
+  batch         ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  keyword       String
+  category      String
+  unitCost      Decimal     @db.Decimal(18, 2)
+  packageCost   Decimal     @db.Decimal(18, 2) @default(0)
+  logisticsCost Decimal     @db.Decimal(18, 2) @default(0)
+  memo          String
+  priority      Int         @default(100)
+  createdAt     DateTime    @default(now())
+
+  @@index([batchId])
+  @@index([category])
+  @@unique([batchId, keyword])
+}
+
+model InventoryPosition {
+  id          String      @id @default(cuid())
+  batchId     String
+  batch       ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  skuKeyword  String
+  category    String
+  onHandQty   Int
+  reservedQty Int         @default(0)
+  unitCost    Decimal     @db.Decimal(18, 2)
+  memo        String
+  createdAt   DateTime    @default(now())
+
+  @@index([batchId])
+  @@index([category])
+  @@unique([batchId, skuKeyword])
+}
+
+model MonthlyTarget {
+  id            String      @id @default(cuid())
+  batchId       String
+  batch         ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  scope         MonthlyTargetScope
+  label         String
+  monthKey      String
+  targetRevenue Decimal     @db.Decimal(18, 2)
+
+  @@index([batchId])
+  @@index([monthKey])
+  @@unique([batchId, scope, label, monthKey])
+}
+
+model ChannelFeeRule {
+  id        String      @id @default(cuid())
+  batchId   String
+  batch     ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  channel   String
+  baseRate  Decimal     @db.Decimal(8, 4)
+  extraRate Decimal     @db.Decimal(8, 4) @default(0)
+  fixedFee  Decimal     @db.Decimal(18, 2) @default(0)
+  note      String
+
+  @@index([batchId])
+  @@unique([batchId, channel])
+}
+
+model MediaSource {
+  id         String      @id @default(cuid())
+  batchId    String
+  batch      ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  media      String
+  sourceType String
+  accountId  String
+  enabled    Boolean     @default(true)
+  note       String
+
+  @@index([batchId])
+  @@unique([batchId, media, accountId])
+}
+
+model SalesFact {
+  id        String   @id @default(cuid())
+  date      DateTime
+  month     String
+  channel   String
+  sku       String
+  category  String
+  revenue   Float
+  netRevenue Float
+  qty       Int
+  orders    Int
+  fee       Float
+  adSpend   Float
+  cost      Float
+  contribution Float
+  createdAt DateTime @default(now())
+
+  @@index([date])
+  @@index([month])
+  @@index([channel])
+  @@index([sku])
+  @@index([category])
+}
+
+enum GoalScope {
+  TOTAL
+  CATEGORY
+  CHANNEL
+  SKU
+}
+
+enum MonthlyTargetScope {
+  TOTAL
+  SKU
+}
