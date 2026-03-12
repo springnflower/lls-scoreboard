@@ -31,5 +31,6 @@ Thumbs.db
 # Prisma
 prisma/migrations/**/migration_lock.toml
 
-# Uploads (로컬 업로드 파일)
-storage/
+# Uploads (로컬 업로드 파일만 제외, lib/server/storage/ 모듈은 포함)
+storage/uploads/
+**/storage/uploads/
