@@ -102,16 +102,56 @@ git push -u origin main
 2. **Sign up** → **Continue with GitHub** 선택 (같은 GitHub로 하면 저장소 목록이 바로 보입니다)
 3. 로그인 후 **Add New…** → **Project** 클릭
 4. **Import Git Repository** 목록에서 방금 올린 **lls-scoreboard** (또는 지정한 이름) 선택 → **Import** 클릭
-5. **Configure Project** 화면에서:
-   - **Root Directory** 옆 **Edit** 클릭 → `v7` 입력 → **Continue**  
-     (저장소 루트가 이미 v7 폴더만 있다면 이 단계는 건너뛰어도 됩니다.)
-   - **Environment Variables** 섹션으로 내려갑니다.
-6. **Environment Variables** 에 변수 추가:
+5. **Configure Project** 화면에서 **Root Directory** 설정 (아래 ▼ "Root Directory 입력 방법"을 꼭 읽어 보세요).
+6. **Environment Variables** 섹션으로 내려갑니다.
+
+---
+
+#### ▼ Root Directory 입력 방법 (입력이 안 될 때)
+
+**먼저 확인:** GitHub 저장소에 **v7 폴더가 있고**, 그 안에 `package.json`, `app` 폴더 등이 있다면 → Root Directory를 **v7**로 설정해야 합니다.  
+저장소 루트에 바로 `package.json`이 있다면( v7 폴더 없이 올린 경우 ) Root Directory는 **건드리지 않고** `./` 그대로 두면 됩니다.
+
+Root Directory 칸이 비활성화되어 있거나 직접 입력이 안 되면 아래 순서대로 해 보세요.
+
+**방법 1 — Edit 버튼으로 입력**
+
+1. **Root Directory** 오른쪽에 있는 **Edit** 버튼을 클릭합니다.
+2. 클릭하면 칸이 활성화되거나, 작은 창(모달)이 뜹니다.
+3. **`./`** 를 지우고 **`v7`** 만 입력합니다. (앞뒤 공백 없이, 소문자 v7.)
+4. **Continue** 또는 **확인** 버튼이 있으면 누릅니다.  
+   없으면 그냥 다른 곳을 클릭해도 저장될 수 있습니다.
+5. 다시 **Root Directory** 칸에 **v7** 이 보이면 됩니다.
+
+**방법 2 — Edit을 눌러도 입력이 안 될 때**
+
+- 일부 Vercel 화면에서는 **Root Directory**가 "폴더 선택" 형태일 수 있습니다.
+  - **Edit** 클릭 후 **Browse** 또는 **Select directory** 같은 버튼이 있으면 누릅니다.
+  - 목록에서 **v7** 폴더를 선택합니다.
+- 또는 **Include source files from a subdirectory** 같은 체크박스가 있으면 체크한 뒤, 아래 나오는 입력란에 **v7** 을 넣어 봅니다.
+
+**방법 3 — 배포 후 설정에서 바꾸기**
+
+1. Root Directory는 **비워 두고** (즉, `./` 그대로 두고) **Deploy**를 먼저 누릅니다.
+2. 배포는 실패할 수 있습니다 (루트에 package.json이 없으면). 괜찮습니다.
+3. Vercel 대시보드 → 해당 프로젝트 클릭 → **Settings** 탭으로 이동.
+4. 왼쪽 메뉴에서 **General** 선택.
+5. **Root Directory** 항목을 찾아 **Edit** 클릭 → **v7** 입력 후 저장.
+6. 상단 **Deployments** 탭 → 맨 위 배포 오른쪽 **⋯(점 3개)** → **Redeploy** 로 다시 배포합니다.
+
+**방법 4 — GitHub 저장소 구조를 바꾸는 방법 (선택)**
+
+- GitHub에 올릴 때 **v7 폴더 안의 파일만** 저장소 루트에 두면 Root Directory를 건드릴 필요가 없습니다.
+  - 예: 새 저장소를 만든 뒤, `v7` 폴더 **안의 모든 파일**만 복사해서 루트에 올립니다 (폴더 이름 v7 없이).
+  - 그러면 Vercel에서 Root Directory는 **비워 두거나 `./`** 로 두면 됩니다.
+
+---
+7. **Environment Variables** 에 변수 추가:
    - **Name:** `DATABASE_URL`  
    - **Value:** ① 단계에서 Neon에서 복사한 **Connection string 전체**를 붙여 넣기  
    - **Add** 클릭
-7. 맨 아래 **Deploy** 버튼 클릭
-8. 빌드가 끝날 때까지 1~2분 기다립니다.  
+8. 맨 아래 **Deploy** 버튼 클릭
+9. 빌드가 끝날 때까지 1~2분 기다립니다.  
    - **Congratulations** 화면이 나오면, **Visit** 버튼이 보입니다.  
    - 아직 DB 테이블을 안 만들었기 때문에, **Visit** 해도 에러가 날 수 있습니다. 다음 ④ 단계를 먼저 진행하세요.
 
