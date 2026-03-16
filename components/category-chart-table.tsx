@@ -8,10 +8,17 @@ const fetcher = (url: string) => fetch(url).then((res) => res.json());
 const fmt = (n: number) => new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 0 }).format(n);
 
 type Row = { category: string; _sum: { revenue?: number; netRevenue?: number; contribution?: number } };
+type CategoryResponse = {
+  rows: Row[];
+  totals: { totalRevenue: number; totalNetRevenue: number; totalContribution: number; totalAdSpend: number };
+};
 
 export function CategoryChartTable({ month }: { month?: string }) {
   const q = month ? `?month=${encodeURIComponent(month)}` : '';
-  const { data: rows, error } = useSWR<Row[]>(`/api/sales-fact/category${q}`, fetcher);
+  const { data, error } = useSWR<CategoryResponse>(`/api/sales-fact/category${q}`, fetcher);
+
+  const rows = data?.rows;
+  const totals = data?.totals;
 
   if (error) return <p className="text-sm text-red-600">로딩 실패</p>;
   if (!Array.isArray(rows) || rows.length === 0) {
@@ -53,6 +60,12 @@ export function CategoryChartTable({ month }: { month?: string }) {
               ))}
             </tbody>
           </table>
+          {totals && (
+            <div className="mt-3 space-y-1 text-xs text-slate-600">
+              <p>총 매출 {fmt(totals.totalRevenue)} · 총 순매출 {fmt(totals.totalNetRevenue)} · 총 공헌이익 {fmt(totals.totalContribution)}</p>
+              <p className="text-slate-500">광고비 {fmt(totals.totalAdSpend)}</p>
+            </div>
+          )}
         </div>
       </div>
     </Card>

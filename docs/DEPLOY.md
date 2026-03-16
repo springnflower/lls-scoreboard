@@ -3,6 +3,8 @@
 팀원들이 **브라우저로 접속**할 수 있는 **웹 주소**를 만드는 방법입니다.  
 아래 **가장 쉬운 방법**만 따라 하면 됩니다.
 
+> **퍼블리싱이 부담되면** → [README](../README.md)의 **「지금 상태 확인하기」**대로 `npm run dev` 로 로컬에서 먼저 사용하세요. (빌드 없이 바로 http://localhost:3000 에서 확인 가능)
+
 ---
 
 # 🟢 가장 쉬운 방법 (추천)
@@ -256,11 +258,56 @@ npm run start
 
 # 문제 해결
 
+## 🔴 "여전히 안 돼" — 자주 나오는 두 가지
+
+### 1. GitHub push 시 "Authentication failed" / "Password authentication is not supported"
+
+**원인:** GitHub는 예전처럼 **비밀번호로 push**를 받지 않습니다. **Personal Access Token(PAT)** 이나 SSH를 써야 합니다.
+
+**해결 순서:**
+
+1. **GitHub에서 토큰 만들기**
+   - https://github.com 로그인 → 오른쪽 위 **프로필 사진** 클릭 → **Settings**
+   - 왼쪽 맨 아래 **Developer settings** → **Personal access tokens** → **Tokens (classic)** 또는 **Fine-grained tokens**
+   - **Generate new token** (classic) 클릭
+   - **Note:** `lls-scoreboard` 등 아무 이름
+   - **Expiration:** 90 days 또는 No expiration
+   - **Select scopes:** **repo** 에 체크 (저장소 전체 권한)
+   - **Generate token** 클릭 후 **나온 토큰을 복사** (한 번만 보이므로 메모장에 붙여 넣기)
+
+2. **터미널에서 push 할 때**
+   - `git push -u origin main` 실행
+   - **Username:** GitHub 아이디 입력
+   - **Password:** 여기에 **비밀번호가 아니라 방금 복사한 토큰**을 붙여 넣기
+
+3. **"remote origin already exists" 가 나온 경우**
+   - `git remote add origin ...` 은 **다시 하지 마세요.** 이미 연결돼 있습니다.
+   - 토큰만 제대로 넣고 `git push -u origin main` 만 다시 실행하면 됩니다.
+
+---
+
+### 2. Vercel 환경 변수에 EXAMPLE_NAME 만 있고 DATABASE_URL 이 없음
+
+**원인:** 스코어보드 앱은 **DATABASE_URL** (Neon DB 주소)이 꼭 필요합니다. `EXAMPLE_NAME` 같은 예시 변수만 있으면 DB에 연결하지 못해 "Application error" 가 납니다.
+
+**해결 순서:**
+
+1. Vercel **New Project** 화면(또는 이미 만든 프로젝트 **Settings** → **Environment Variables**)으로 이동
+2. **EXAMPLE_NAME** 행은 **삭제**하거나 무시
+3. **Add** 또는 **+ Add More** 로 새 변수 추가:
+   - **Key:** `DATABASE_URL`
+   - **Value:** ① 단계에서 Neon에서 복사한 **Connection string 전체** (예: `postgresql://user:pass@ep-xxx.neon.tech/neondb?sslmode=require`)
+4. 저장 후 **Deploy** (새 프로젝트면 Deploy, 이미 있으면 **Redeploy**)
+
+Neon을 아직 안 만들었다면, 가이드 ① 단계(Neon에서 DB 만들기)를 먼저 하고 위처럼 `DATABASE_URL`만 넣으면 됩니다.
+
+---
+
 | 증상 | 확인할 것 |
 |------|------------|
 | 배포 후 "Application error" | Vercel **Settings → Environment Variables**에 `DATABASE_URL`이 Neon 주소로 들어갔는지 확인. ④ 단계 마이그레이션을 실행했는지 확인. |
 | "Cannot find module" | 터미널에서 `cd v7` 후 `rm -rf .next` → `npm run build` 실행. 그다음 `git add .` → `commit` → `push` 로 다시 배포. |
-| GitHub push 시 비밀번호 오류 | GitHub 비밀번호 대신 **Personal access token** 사용. (GitHub → Settings → Developer settings → Personal access tokens) |
+| GitHub push 시 비밀번호 오류 | GitHub 비밀번호 대신 **Personal access token** 사용. (위 "1. GitHub push 시" 참고) |
 
 ---
 

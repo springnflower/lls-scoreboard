@@ -5,7 +5,9 @@ export function cn(...parts: Array<string | false | null | undefined>) {
 export function toNumber(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string') {
-    const normalized = value.replace(/,/g, '').trim();
+    const trimmed = value.trim();
+    if (trimmed === '' || trimmed === '-') return 0;
+    const normalized = trimmed.replace(/,/g, '');
     const parsed = Number(normalized);
     return Number.isFinite(parsed) ? parsed : 0;
   }

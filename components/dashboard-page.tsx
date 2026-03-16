@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import useSWR from 'swr';
 import { Button, Card, Input, SectionTitle, Select } from './ui';
 import { FileUpload } from './file-upload';
 import { MonthlyLineChart } from './charts';
@@ -21,6 +22,13 @@ function KpiValue({ card }: { card: KpiCard }) {
 export function DashboardPage() {
   const { data, goals, batches, batchId, fileName, importedAt, filters, hydrate, setBatches, setFilter, resetFilters } = useScoreboardStore();
   const [loading, setLoading] = useState(false);
+  const { data: summary } = useSWR<{
+    totalRevenue: number;
+    totalNetRevenue: number;
+    totalContribution: number;
+    totalAdSpend: number;
+    contributionAfterAdSpend: number;
+  }>('/api/sales/summary', (url) => fetch(url).then((res) => res.json()));
 
   useEffect(() => {
     (async () => {
@@ -34,6 +42,27 @@ export function DashboardPage() {
   }, [hydrate, setBatches]);
 
   const model = useMemo(() => (data ? getDashboardModel(data, filters, goals) : null), [data, filters, goals]);
+
+  const bep = useMemo(() => {
+    const net = summary?.totalNetRevenue ?? 0;
+    const contrib = summary?.totalContribution ?? 0;
+    const ad = summary?.totalAdSpend ?? 0;
+    const profit = summary?.contributionAfterAdSpend ?? contrib - ad;
+
+    const contributionMargin = net > 0 ? contrib / net : 0;
+    const profitMargin = net > 0 ? profit / net : 0;
+
+    const bepSalesByContribution = contributionMargin > 0 ? ad / contributionMargin : 0;
+    const bepSalesByProfit = profitMargin > 0 ? ad / profitMargin : 0;
+
+    return {
+      contributionMargin,
+      profitMargin,
+      adSpend: ad,
+      bepSalesByContribution,
+      bepSalesByProfit,
+    };
+  }, [summary]);
 
   async function onChangeBatch(nextId: string) {
     setLoading(true);
@@ -54,9 +83,9 @@ export function DashboardPage() {
           <div className="grid gap-6 lg:grid-cols-[1.25fr_0.75fr] lg:items-end">
             <div>
               <p className="text-sm text-slate-300">LLS Scoreboard v7</p>
-              <h1 className="mt-2 text-3xl font-semibold tracking-tight lg:text-4xl">발주·재고·목표 계획 시스템</h1>
+              <h1 className="mt-2 text-3xl font-semibold tracking-tight lg:text-4xl">스코어보드 분석 시스템</h1>
               <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">
-                월별 목표, SKU 목표, 재고 자산, 채널 수수료 룰, 미디어 소스까지 연결해 목표 지향적으로 운영할 수 있는 planning dashboard 입니다.
+                월별 목표, SKU 손익, 재고 자산, 채널·광고 성과까지 한 번에 보는 스코어보드 분석 대시보드입니다.
               </p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -75,9 +104,7 @@ export function DashboardPage() {
                   <Button asLink="/categories" className="bg-slate-700 text-white">Categories</Button>
                   <Button asLink="/marketing" className="bg-slate-700 text-white">Marketing</Button>
                   <Button asLink="/inventory" className="bg-slate-700 text-white">Inventory</Button>
-                  <Button asLink="/planning" className="bg-slate-700 text-white">Planning</Button>
                   <Button asLink="/analytics" className="bg-slate-700 text-white">Analytics</Button>
-                  <Button asLink="/goals" className="bg-slate-700 text-white">목표/광고비</Button>
                 </div>
               </div>
             </div>
@@ -122,6 +149,55 @@ export function DashboardPage() {
               <p className="mt-3 text-sm leading-6 text-slate-500">{card.description}</p>
             </Card>
           ))}
+        </section>
+
+        <section className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+          <Card>
+            <SectionTitle title="BEP (손익분기 매출)" description="공헌이익/순이익 기준 광고비를 커버해야 하는 매출" />
+            <div className="mt-3 space-y-2">
+              <div className="flex items-baseline justify-between">
+                <p className="text-sm text-slate-500">공헌이익률</p>
+                <p className="text-2xl font-semibold tabular-nums text-slate-900">{pct(bep.contributionMargin)}</p>
+              </div>
+              <div className="flex items-baseline justify-between">
+                <p className="text-sm text-slate-500">순이익률 (공헌이익 − 광고비)</p>
+                <p className="text-2xl font-semibold tabular-nums text-slate-900">{pct(bep.profitMargin)}</p>
+              </div>
+              <div className="flex items-baseline justify-between">
+                <p className="text-sm text-slate-500">광고비 (총)</p>
+                <p className="text-2xl font-semibold tabular-nums text-slate-900">{currency(bep.adSpend)}</p>
+              </div>
+              <div className="flex items-baseline justify-between">
+                <p className="text-sm text-slate-500">BEP 매출 (공헌이익 기준)</p>
+                <p className="text-2xl font-semibold tabular-nums text-slate-900">{currency(bep.bepSalesByContribution)}</p>
+              </div>
+              <div className="flex items-baseline justify-between">
+                <p className="text-sm text-slate-500">BEP 매출 (순이익 기준)</p>
+                <p className="text-2xl font-semibold tabular-nums text-slate-900">{currency(bep.bepSalesByProfit)}</p>
+              </div>
+            </div>
+          </Card>
+          <Card>
+            <SectionTitle title="목표 달성 시나리오" description="연간 목표를 맞추기 위한 월별·SKU별 가이드" />
+            <div className="mt-3 space-y-2">
+              <p className="flex items-baseline justify-between text-sm text-slate-600">
+                <span>연간 목표</span>
+                <span className="font-semibold text-slate-900">{currency(model?.targetScenario?.totalGoal ?? 0)}</span>
+              </p>
+              <p className="flex items-baseline justify-between text-sm text-slate-600">
+                <span>남은 목표</span>
+                <span className="font-semibold text-slate-900">{currency(model?.targetScenario?.remainingGoal ?? 0)}</span>
+              </p>
+              <p className="flex items-baseline justify-between text-sm text-slate-600">
+                <span>남은 개월 수</span>
+                <span className="font-semibold text-slate-900">{model?.targetScenario?.remainingMonths ?? 0}개월</span>
+              </p>
+              <p className="flex items-baseline justify-between text-sm text-slate-600">
+                <span>필요 월 매출 (평균)</span>
+                <span className="font-semibold text-slate-900">{currency(model?.targetScenario?.requiredMonthlySales ?? 0)}</span>
+              </p>
+            </div>
+          </Card>
         </section>
 
         <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
@@ -173,7 +249,7 @@ export function DashboardPage() {
 
         <section className="grid gap-6 xl:grid-cols-2">
           <Card>
-            <SectionTitle title="SKU 목표 / 발주 추천" description="달성률, sell-through, WOC, 발주량" />
+            <SectionTitle title="SKU 목표" description="달성률과 sell-through 중심의 SKU 성과" />
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead className="border-b border-line text-left text-slate-500">
@@ -183,8 +259,6 @@ export function DashboardPage() {
                     <th className="py-3 pr-4">목표</th>
                     <th className="py-3 pr-4">달성률</th>
                     <th className="py-3 pr-4">Sell-through</th>
-                    <th className="py-3 pr-4">WOC</th>
-                    <th className="py-3 pr-4">추천발주</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -195,8 +269,6 @@ export function DashboardPage() {
                       <td className="py-3 pr-4">{currency(row.targetRevenue)}</td>
                       <td className="py-3 pr-4">{pct(row.achievementRate)}</td>
                       <td className="py-3 pr-4">{pct(row.sellThrough)}</td>
-                      <td className="py-3 pr-4">{num(row.weeksOfCover)}</td>
-                      <td className="py-3 pr-4">{num(row.reorderQty)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -204,26 +276,28 @@ export function DashboardPage() {
             </div>
           </Card>
           <Card>
-            <SectionTitle title="재고/과잉 재고 감지" description="재고 부족과 과잉을 동시에 체크" />
+            <SectionTitle title="SKU별 제안 목표" description="최근 추이를 기준으로 한 월별 매출·수량 가이드" />
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead className="border-b border-line text-left text-slate-500">
                   <tr>
                     <th className="py-3 pr-4">SKU</th>
-                    <th className="py-3 pr-4">가용수량</th>
-                    <th className="py-3 pr-4">재고자산</th>
-                    <th className="py-3 pr-4">WOC</th>
-                    <th className="py-3 pr-4">상태</th>
+                    <th className="py-3 pr-4">최근3개월 평균 매출</th>
+                    <th className="py-3 pr-4">최근3개월 평균 수량</th>
+                    <th className="py-3 pr-4">기여 비중</th>
+                    <th className="py-3 pr-4">제안 월 매출</th>
+                    <th className="py-3 pr-4">제안 월 수량</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(model?.inventoryTracker ?? []).slice(0, 12).map((row: any) => (
-                    <tr key={row.skuKeyword} className="border-b border-line/70">
-                      <td className="py-3 pr-4 font-medium">{row.skuKeyword}</td>
-                      <td className="py-3 pr-4">{num(row.availableQty)}</td>
-                      <td className="py-3 pr-4">{currency(row.assetValue)}</td>
-                      <td className="py-3 pr-4">{num(row.weeksOfCover)}</td>
-                      <td className="py-3 pr-4">{row.shortageAlert ? '부족위험' : row.excessAlert ? '과잉위험' : '-'}</td>
+                  {(model?.targetScenario?.skuTargets ?? []).slice(0, 12).map((row: any) => (
+                    <tr key={row.productName} className="border-b border-line/70">
+                      <td className="py-3 pr-4 font-medium">{row.productName}</td>
+                      <td className="py-3 pr-4">{currency(row.recentAvgSales)}</td>
+                      <td className="py-3 pr-4">{num(row.recentAvgQty)}</td>
+                      <td className="py-3 pr-4">{pct(row.share)}</td>
+                      <td className="py-3 pr-4">{currency(row.targetSales)}</td>
+                      <td className="py-3 pr-4">{num(row.targetQty)}</td>
                     </tr>
                   ))}
                 </tbody>

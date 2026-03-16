@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useRef, useEffect, useMemo, useState } from 'react';
 import { Button, Card, SectionTitle, Textarea } from './ui';
 import { useScoreboardStore } from '@/lib/store';
 import type { InventoryPositionRow, PersistedDashboardResponse } from '@/lib/types';
@@ -25,6 +25,9 @@ export function InventoryPage() {
   const [text, setText] = useState('');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [uploadMessage, setUploadMessage] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!batchId) {
@@ -69,6 +72,36 @@ export function InventoryPage() {
     }
   };
 
+  const uploadInventoryFile = async () => {
+    const input = fileInputRef.current;
+    if (!input?.files?.length) {
+      setUploadMessage('파일을 선택해 주세요.');
+      return;
+    }
+    setUploading(true);
+    setUploadMessage('');
+    try {
+      const formData = new FormData();
+      formData.append('file', input.files[0]);
+      const res = await fetch('/api/inventory/upload', { method: 'POST', body: formData });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setUploadMessage(data?.message || data?.detail || '업로드 실패');
+        return;
+      }
+      hydrate(data as PersistedDashboardResponse);
+      const positions = data?.data?.inventoryPositions ?? [];
+      setText(rowsToText(positions));
+      setUploadMessage(data?.message || `반영 완료 (${positions.length}건)`);
+      input.value = '';
+    } catch (e) {
+      console.error(e);
+      setUploadMessage('업로드 중 오류가 났습니다.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
     <main className="min-h-screen px-6 py-8 lg:px-10">
       <div className="mx-auto max-w-5xl space-y-6">
@@ -84,7 +117,22 @@ export function InventoryPage() {
         </Card>
 
         <Card>
-          <SectionTitle title="입력 가이드" description="재고량 / 예약수량 / 재고자산 산정용 데이터" />
+          <SectionTitle title="재고 엑셀 업로드" description="재고량 시트 또는 raw5(재고) 시트가 있는 엑셀 파일만 업로드하면 현재 배치에 반영됩니다." />
+          <div className="flex flex-wrap items-center gap-3">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx,.xls"
+              className="text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-200 file:px-4 file:py-2 file:text-sm file:font-medium"
+            />
+            <Button onClick={uploadInventoryFile} disabled={uploading}>{uploading ? '업로드 중...' : '재고 엑셀 업로드'}</Button>
+            <span className="text-sm text-slate-500">{uploadMessage}</span>
+          </div>
+          <p className="mt-2 text-xs text-slate-500">시트 이름: 재고량 (매트릭스) 또는 raw5(재고). 먼저 매출/정산 엑셀을 한 번 업로드한 뒤 사용하세요.</p>
+        </Card>
+
+        <Card>
+          <SectionTitle title="입력 가이드 (수동)" description="재고량 / 예약수량 / 재고자산 산정용 데이터" />
           <pre className="whitespace-pre-wrap rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">{help}</pre>
         </Card>
 

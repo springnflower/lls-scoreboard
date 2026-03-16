@@ -24,7 +24,7 @@ const normalizeChannel = (raw: string) => {
   return raw
 }
 
-const has = (text: string, keyword: string) => (text || '').toLowerCase().includes(keyword.toLowerCase())
+const normalizeForMatch = (s: string) => (s || '').replace(/[\s-]/g, '').toLowerCase()
 
 function matchCost(
   productName: string,
@@ -32,9 +32,15 @@ function matchCost(
   masters: BatchInput['costMasters']
 ): { unitCost: number; packageCost: number; logisticsCost: number } | null {
   if (!masters?.length) return null
+  const nameNorm = normalizeForMatch(productName)
   const matched = masters
-    .filter((m) => (!m.category || m.category === category) && has(productName, m.keyword))
-    .sort((a, b) => (a.priority ?? 100) - (b.priority ?? 100) || b.keyword.length - a.keyword.length)[0]
+    .filter((m) => {
+      if (m.category && m.category !== category) return false
+      const kw = (m.keyword ?? '').trim()
+      const kwNorm = normalizeForMatch(kw)
+      return nameNorm.includes(kwNorm) || kwNorm.includes(nameNorm)
+    })
+    .sort((a, b) => (a.priority ?? 100) - (b.priority ?? 100) || (b.keyword?.length ?? 0) - (a.keyword?.length ?? 0))[0]
   if (!matched) return null
   return {
     unitCost: Number(matched.unitCost) || 0,
@@ -104,11 +110,39 @@ const MAX_UNIT_COST = 50_000_000
 /** 행당 수수료/광고비는 해당 행 순매출의 이 배수까지만 인정 (비정상 배분 방지) */
 const MAX_FEE_OR_ADSPEND_MULTIPLIER = 5
 
+/** 채널·월별 매출 합계 (commission 시트 보정용) */
+function revenueByMonthChannel(salesOrders: BatchInput['salesOrders']): Map<string, number> {
+  const map = new Map<string, number>()
+  for (const o of salesOrders) {
+    const channel = normalizeChannel(o.channel)
+    const month = o.monthKey && /^\d{4}-\d{2}$/.test(o.monthKey) ? o.monthKey : (o.orderDate ? new Date(o.orderDate).toISOString().slice(0, 7) : '')
+    if (!month) continue
+    const key = `${month}|${channel}`
+    const rev = Number(o.consumerPrice) || 0
+    map.set(key, (map.get(key) ?? 0) + rev)
+  }
+  return map
+}
+
 /** 배치의 매출/정산 데이터를 SalesFact 행으로 변환 (Sales·SKU·Channels 등 페이지 집계용) */
-export function batchToSalesFactRows(batch: BatchInput): SalesFactRow[] {
+export function batchToSalesFactRows(
+  batch: BatchInput,
+  channelCommissionRates?: Record<string, number>
+): SalesFactRow[] {
   const feeMap = feeByMonthChannel(batch.settlements)
   const adSpendMap = adSpendByMonthChannel(batch.adSpends)
   const costMasters = batch.costMasters ?? []
+
+  if (channelCommissionRates && Object.keys(channelCommissionRates).length > 0) {
+    const revByKey = revenueByMonthChannel(batch.salesOrders)
+    for (const [key, revenueSum] of revByKey) {
+      const currentFee = feeMap.get(key) ?? 0
+      if (currentFee > 0) continue
+      const channel = key.split('|')[1] ?? ''
+      const rate = channelCommissionRates[channel] ?? channelCommissionRates[channel.trim()] ?? 0
+      if (rate > 0) feeMap.set(key, revenueSum * rate)
+    }
+  }
 
   const countByKey = new Map<string, number>()
   for (const o of batch.salesOrders) {
@@ -125,7 +159,6 @@ export function batchToSalesFactRows(batch: BatchInput): SalesFactRow[] {
     const channel = normalizeChannel(o.channel)
     const revenue = Number(o.consumerPrice) || 0
     const canceled = isCanceled(o.status)
-    const netRevenue = canceled ? 0 : revenue
     const date = o.orderDate || new Date()
     const month = o.monthKey && /^\d{4}-\d{2}$/.test(o.monthKey) ? o.monthKey : date.toISOString().slice(0, 7)
     const key = `${month}|${channel}`
@@ -137,18 +170,20 @@ export function batchToSalesFactRows(batch: BatchInput): SalesFactRow[] {
     const totalAdSpend = adSpendMap.get(key) ?? 0
     let adSpend = count > 0 ? totalAdSpend / count : 0
 
+    // 순매출 = 매출(판매금액) - 수수료. 취소건은 0.
+    const netRevenue = canceled ? 0 : Math.max(0, revenue - fee)
+
+    // 행당 수수료·광고비가 매출 대비 비정상적으로 크면 상한 적용 (순환 방지를 위해 매출 기준)
+    const cap = (canceled ? 0 : revenue) * MAX_FEE_OR_ADSPEND_MULTIPLIER
+    if (fee > cap) fee = cap
+    if (adSpend > cap) adSpend = cap
+    // 제품원가도 순매출의 20배를 넘지 않도록 상한 (오입력 방지)
     const costMaster = matchCost(o.productName ?? '', o.category ?? '미분류', costMasters)
     const rawUnitCost = costMaster
       ? costMaster.unitCost + costMaster.packageCost + costMaster.logisticsCost
       : 0
     const unitCost = rawUnitCost > MAX_UNIT_COST ? MAX_UNIT_COST : rawUnitCost
     let cost = unitCost * (o.qty ?? 0)
-
-    // 행당 수수료·광고비가 순매출 대비 비정상적으로 크면 상한 적용 (공헌이익 폭증 방지)
-    const cap = netRevenue * MAX_FEE_OR_ADSPEND_MULTIPLIER
-    if (fee > cap) fee = cap
-    if (adSpend > cap) adSpend = cap
-    // 제품원가도 순매출의 20배를 넘지 않도록 상한 (오입력 방지)
     const costCap = netRevenue * 20
     if (cost > costCap) cost = costCap
 
@@ -171,8 +206,11 @@ export function batchToSalesFactRows(batch: BatchInput): SalesFactRow[] {
 }
 
 /** 기존 SalesFact 전부 삭제 후 새 행으로 채움 (import 시 배치 기준으로 Sales 오버뷰 집계) */
-export async function rebuildSalesFactFromBatch(batch: Parameters<typeof batchToSalesFactRows>[0]) {
-  const rows = batchToSalesFactRows(batch)
+export async function rebuildSalesFactFromBatch(
+  batch: Parameters<typeof batchToSalesFactRows>[0],
+  channelCommissionRates?: Record<string, number>
+) {
+  const rows = batchToSalesFactRows(batch, channelCommissionRates)
   await prisma.salesFact.deleteMany({})
   if (rows.length === 0) return
   await buildSalesFact(rows)
@@ -183,8 +221,8 @@ const MIN_CONTRIBUTION_MULTIPLIER = 50
 
 export async function buildSalesFact(rows: SalesFactRow[]) {
   const facts = rows.map((r) => {
-    // 공헌이익 = 순매출 - 제품원가 - 수수료(commission) - 광고비
-    let contribution = r.netRevenue - r.cost - r.fee - r.adSpend
+    // 공헌이익 = 순매출 - 제품원가  (순매출에 이미 수수료가 반영되어 있으므로 여기서는 한 번만 차감)
+    let contribution = r.netRevenue - r.cost
     const floor = r.netRevenue * -MIN_CONTRIBUTION_MULTIPLIER
     if (contribution < floor) contribution = floor
     return {

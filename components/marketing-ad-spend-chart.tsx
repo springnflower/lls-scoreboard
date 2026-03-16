@@ -79,7 +79,7 @@ export function MarketingAdSpendChart() {
                 <td className="py-2 pr-4 font-medium text-slate-900">{r.channel}</td>
                 <td className="py-2 pr-4 text-right tabular-nums text-slate-700">{fmt(r.광고비)}</td>
                 <td className="py-2 pr-4 text-right tabular-nums text-slate-700">{fmt(r.매출)}</td>
-                <td className="py-2 text-right tabular-nums text-slate-700">{r.ROAS.toFixed(2)}</td>
+                <td className="py-2 text-right tabular-nums text-slate-700">{(r.ROAS * 100).toFixed(1)}%</td>
               </tr>
             ))}
           </tbody>

@@ -23,10 +23,26 @@ const has = (text: string, keyword: string) => (text || '').toLowerCase().includ
 const isCanceledSale = (row: SalesRow) => ['취소', '환불', '반품'].some((k) => has(row.status, k));
 const isCanceledSettlement = (row: SettlementRow) => row.settlementAmount < 0 || ['취소', '환불', '반품'].some((k) => has(`${row.cancelType} ${row.transactionType}`, k));
 
+const normalizeForMatch = (s: string) => (s || '').replace(/[\s-]/g, '').toLowerCase();
+
 function matchCost(productName: string, category: string, masters: ProductCostMasterRow[]) {
-  return masters
-    .filter((m) => (!m.category || m.category === category) && has(productName, m.keyword))
-    .sort((a, b) => (a.priority ?? 100) - (b.priority ?? 100) || b.keyword.length - a.keyword.length)[0];
+  if (!masters?.length) return undefined;
+  const nameNorm = normalizeForMatch(productName);
+  const matched = masters
+    .filter((m) => {
+      if (m.category && m.category !== category) return false;
+      const kw = (m.keyword ?? '').trim();
+      return nameNorm.includes(normalizeForMatch(kw)) || normalizeForMatch(kw).includes(nameNorm);
+    })
+    .sort((a, b) => (a.priority ?? 100) - (b.priority ?? 100) || (b.keyword?.length ?? 0) - (a.keyword?.length ?? 0))[0];
+  return matched;
+}
+
+/** 재고 행에 단가가 없을 때(재고량 시트 등) 원가마스터에서 단가 보정 */
+function resolveInventoryUnitCost(skuKeyword: string, category: string, masters: ProductCostMasterRow[]): number {
+  const m = matchCost(skuKeyword, category, masters);
+  if (!m) return 0;
+  return (m.unitCost ?? 0) + (m.packageCost ?? 0) + (m.logisticsCost ?? 0);
 }
 
 function matchInventory(productName: string, inventory: InventoryPositionRow[]) {
@@ -89,11 +105,16 @@ export function getDashboardModel(data: ScoreboardData, filters: DashboardFilter
   const totalGoal = goals.find((g) => g.scope === 'TOTAL');
   const totalGoalValue = totalGoal?.targetRevenue ?? 0;
   const remainingGoal = Math.max(totalGoalValue - netSales, 0);
+  const now = new Date();
+  const currentMonthIdx = now.getMonth(); // 0-based
+  const remainingMonths = Math.max(12 - currentMonthIdx, 1);
+  const requiredMonthlySales = remainingGoal > 0 ? remainingGoal / remainingMonths : 0;
 
   const invSummary = inventory.reduce((acc, row) => {
     const availableQty = Math.max(row.onHandQty - (row.reservedQty ?? 0), 0);
     acc.qty += availableQty;
-    acc.asset += availableQty * row.unitCost;
+    const unitCost = row.unitCost && row.unitCost > 0 ? row.unitCost : resolveInventoryUnitCost(row.skuKeyword ?? '', row.category ?? '', costMasters);
+    acc.asset += availableQty * unitCost;
     return acc;
   }, { qty: 0, asset: 0 });
 
@@ -117,6 +138,11 @@ export function getDashboardModel(data: ScoreboardData, filters: DashboardFilter
   });
   const monthlyTrend = Array.from(monthlyMap.values()).sort((a, b) => a.month.localeCompare(b.month));
 
+  const channelRevenue = new Map<string, number>();
+  activeSales.forEach((row) => {
+    channelRevenue.set(row.channel, (channelRevenue.get(row.channel) ?? 0) + row.consumerPrice);
+  });
+
   const channelFeeMap = new Map<string, { channel: string; fee: number; settlement: number; expectedFee: number }>();
   filteredSettlements.forEach((row) => {
     const current = channelFeeMap.get(row.partner) ?? { channel: row.partner, fee: 0, settlement: 0, expectedFee: 0 };
@@ -127,7 +153,8 @@ export function getDashboardModel(data: ScoreboardData, filters: DashboardFilter
   const channelFeeTotals = Array.from(channelFeeMap.values()).map((row) => {
     const rule = feeRules.find((r) => r.channel === row.channel);
     const expectedFee = rule ? row.settlement * ((rule.baseRate ?? 0) + (rule.extraRate ?? 0)) + (rule.fixedFee ?? 0) : 0;
-    return { ...row, feeRate: div(row.fee, row.settlement || 1), expectedFee, variance: row.fee - expectedFee };
+    const revenue = channelRevenue.get(row.channel) ?? 0;
+    return { ...row, feeRate: div(row.fee, revenue || 1), expectedFee, variance: row.fee - expectedFee };
   }).sort((a, b) => b.fee - a.fee);
 
   const mediaSpendTotals = Array.from(adSpends.reduce((map, row) => {
@@ -139,6 +166,42 @@ export function getDashboardModel(data: ScoreboardData, filters: DashboardFilter
     map.set(row.media, current);
     return map;
   }, new Map<string, { media: string; spend: number; enabledSourceCount: number }>()).values()).map((row) => ({ ...row, share: div(row.spend, adTotal || 1) })).sort((a, b) => b.spend - a.spend);
+
+  const get지면 = (channel: string, media: string) => {
+    const c = (channel || '').toLowerCase();
+    const m = (media || '').toLowerCase();
+    if (c.includes('네이버') || m.includes('네이버')) return '네이버';
+    if (c.includes('meta') || c.includes('메타') || m.includes('meta') || m.includes('메타') || m.includes('facebook') || m.includes('instagram')) return '메타';
+    if (c.includes('카카오') || m.includes('카카오')) return '카카오';
+    return '기타';
+  };
+  const spendBy지면 = Array.from(adSpends.reduce((map, row) => {
+    if (filters.month !== 'all' && row.month !== filters.month) return map;
+    const 지면 = get지면(row.channel, row.media);
+    const current = map.get(지면) ?? { 지면, spend: 0 };
+    current.spend += row.spend;
+    map.set(지면, current);
+    return map;
+  }, new Map<string, { 지면: string; spend: number }>()).values()).map((row) => ({ ...row, share: div(row.spend, adTotal || 1) })).sort((a, b) => b.spend - a.spend);
+
+  const monthlyChannelSales = new Map<string, Record<string, number>>();
+  activeSales.forEach((row) => {
+    const cur = monthlyChannelSales.get(row.month) ?? { 자사몰: 0, 네이버: 0 };
+    if (row.channel === '자사몰') cur.자사몰 += row.consumerPrice;
+    if (row.channel === '네이버') cur.네이버 += row.consumerPrice;
+    monthlyChannelSales.set(row.month, cur);
+  });
+  const monthlyTrendByChannel = Array.from(monthlyTrend).map((t) => {
+    const sales자사몰 = monthlyChannelSales.get(t.month)?.자사몰 ?? 0;
+    const sales네이버 = monthlyChannelSales.get(t.month)?.네이버 ?? 0;
+    const totalSpend = t.spend;
+    return {
+      month: t.month,
+      totalSpend,
+      자사몰: { sales: sales자사몰, roas: div(sales자사몰, totalSpend) },
+      네이버: { sales: sales네이버, roas: div(sales네이버, totalSpend) },
+    };
+  });
 
   const skuAccumulator = new Map<string, any>();
   enrichedSales.forEach((row) => {
@@ -152,7 +215,8 @@ export function getDashboardModel(data: ScoreboardData, filters: DashboardFilter
     const goal = matchGoal(row.productName, goals);
     const inv = matchInventory(row.productName, inventory);
     const availableQty = Math.max((inv?.onHandQty ?? 0) - (inv?.reservedQty ?? 0), 0);
-    const asset = availableQty * (inv?.unitCost ?? (row.units ? row.cogs / row.units : 0));
+    const invUnitCost = inv && (inv.unitCost ?? 0) > 0 ? inv.unitCost! : resolveInventoryUnitCost(inv?.skuKeyword ?? row.productName ?? '', inv?.category ?? row.category ?? '', costMasters);
+    const asset = availableQty * (invUnitCost || (row.units ? row.cogs / row.units : 0));
     const avgPrice = row.units ? row.sales / row.units : 0;
     const months = monthlyTrend.length || 1;
     const monthlyRunRateQty = row.units / months;
@@ -178,9 +242,10 @@ export function getDashboardModel(data: ScoreboardData, filters: DashboardFilter
 
   const inventoryTracker = inventory.map((row) => {
     const availableQty = Math.max(row.onHandQty - (row.reservedQty ?? 0), 0);
+    const unitCost = row.unitCost && row.unitCost > 0 ? row.unitCost : resolveInventoryUnitCost(row.skuKeyword ?? '', row.category ?? '', costMasters);
     const sku = skuGoalTracker.find((s: any) => has(s.productName, row.skuKeyword));
     const retailPotential = availableQty * (sku?.sales && sku?.units ? sku.sales / sku.units : 0);
-    return { ...row, availableQty, assetValue: availableQty * row.unitCost, retailPotential, sellThrough: sku?.sellThrough ?? 0, weeksOfCover: sku?.weeksOfCover ?? 0, reorderQty: sku?.reorderQty ?? 0, shortageAlert: sku?.shortageAlert ?? false, excessAlert: sku?.excessAlert ?? false };
+    return { ...row, availableQty, assetValue: availableQty * unitCost, retailPotential, sellThrough: sku?.sellThrough ?? 0, weeksOfCover: sku?.weeksOfCover ?? 0, reorderQty: sku?.reorderQty ?? 0, shortageAlert: sku?.shortageAlert ?? false, excessAlert: sku?.excessAlert ?? false };
   }).sort((a, b) => b.assetValue - a.assetValue);
 
   const planningAlerts = [
@@ -194,7 +259,7 @@ export function getDashboardModel(data: ScoreboardData, filters: DashboardFilter
     { label: '누적 순매출', value: netSales, unit: 'currency', description: '취소 제외 매출' },
     { label: '남은 목표', value: remainingGoal, unit: 'currency', description: `달성률 ${(div(netSales, totalGoalValue || 1) * 100).toFixed(1)}%` },
     { label: '채널 수수료 총합', value: feeTotal, unit: 'currency', description: '유통 채널 수수료 total' },
-    { label: '광고비 총합', value: adTotal, unit: 'currency', description: '미디어별 집행 total (입력: 목표/광고비 페이지)' },
+    { label: '광고비 총합', value: adTotal, unit: 'currency', description: '미디어별 집행 total' },
     { label: '재고 자산', value: invSummary.asset, unit: 'currency', description: '가용 재고 원가 기준 (입력: 재고 페이지)' },
     { label: '재고 가용수량', value: invSummary.qty, unit: 'count', description: '예약 제외 재고 (입력: 재고 페이지)' },
     { label: '원가 매칭률', value: div(enrichedSales.filter((r) => r.unitCost > 0).reduce((s, r) => s + r.qty, 0), netUnits || 1), unit: 'percent', description: 'sku 손익 계산 커버리지' }
@@ -205,11 +270,33 @@ export function getDashboardModel(data: ScoreboardData, filters: DashboardFilter
     overallTarget: { totalTarget: totalGoalValue, achievedRevenue: netSales, remainingToTarget: remainingGoal, achievementRate: div(netSales, totalGoalValue || 1) },
     inventorySummary: invSummary,
     monthlyTrend,
+    monthlyTrendByChannel,
+    spendBy지면,
     skuGoalTracker,
     channelFeeTotals,
     mediaSpendTotals,
     inventoryTracker,
     planningAlerts,
+    targetScenario: {
+      totalGoal: totalGoalValue,
+      remainingGoal,
+      remainingMonths,
+      requiredMonthlySales,
+      skuTargets: skuGoalTracker.map((row: any) => {
+        const share = netSales > 0 ? row.sales / netSales : 0;
+        const targetSales = requiredMonthlySales * share;
+        const avgPrice = row.units ? row.sales / row.units : 0;
+        const targetQty = avgPrice > 0 ? targetSales / avgPrice : 0;
+        return {
+          productName: row.productName,
+          recentAvgSales: monthlyTrend.length ? row.sales / monthlyTrend.length : row.sales,
+          recentAvgQty: monthlyTrend.length ? row.units / monthlyTrend.length : row.units,
+          share,
+          targetSales,
+          targetQty,
+        };
+      }),
+    },
     options: {
       months: Array.from(new Set(data.sales.map((r) => r.month))).sort(),
       channels: Array.from(new Set(data.sales.map((r) => normalizeChannel(r.channel)))).sort(),

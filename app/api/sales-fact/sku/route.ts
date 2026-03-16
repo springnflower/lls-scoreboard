@@ -14,11 +14,7 @@ export async function GET(request: NextRequest) {
       netRevenue: true,
       contribution: true,
     },
-    orderBy: {
-      _sum: {
-        revenue: 'desc',
-      },
-    },
+    orderBy: { _sum: { revenue: 'desc' } },
   })
 
   return Response.json(rows)

@@ -1,7 +1,7 @@
 import { appendFileSync } from 'fs';
 import { join } from 'path';
 import { GoalScope } from '@prisma/client';
-import { parseScoreboardBuffer } from '@/lib/excel-parser';
+import { parseScoreboardBuffer, parseInventoryFromBuffer, parseCommissionRatesFromBuffer } from '@/lib/excel-parser';
 import { prisma } from './db';
 import { DEFAULT_GOALS } from './default-goals';
 import { DEFAULT_COST_MASTERS } from './default-cost-masters';
@@ -97,8 +97,9 @@ export async function importScoreboardWorkbook(
 ) {
   const parsed = parseScoreboardBuffer(buffer);
   const excelAdSpends = parsed.adSpends ?? [];
-  const excelInventory = parsed.inventoryPositions ?? [];
-  debugLog(`parse ok sales=${parsed.sales.length} settlements=${parsed.settlements.length} purchases=${parsed.purchases.length} adSpends=${excelAdSpends.length} inventory=${excelInventory.length}`);
+  const channelCommissionRates = parseCommissionRatesFromBuffer(buffer);
+  const commissionChannelCount = Object.keys(channelCommissionRates).length;
+  debugLog(`parse ok sales=${parsed.sales.length} settlements=${parsed.settlements.length} purchases=${parsed.purchases.length} adSpends=${excelAdSpends.length} commission시트채널=${commissionChannelCount}`);
   const persisted = await persistUploadedWorkbook(fileName, new Uint8Array(buffer));
   debugLog(`persist ok storagePath=${persisted.storagePath ?? '(none)'}`);
   const batchData: Parameters<typeof prisma.importBatch.create>[0]['data'] = {
@@ -109,7 +110,7 @@ export async function importScoreboardWorkbook(
     purchaseCosts: { createMany: { data: parsed.purchases.map((row) => ({ accountType: row.accountType, fiscalYear: row.fiscalYear, purchaseDate: toDate(row.purchaseDate), vendor: row.vendor, item: row.item, qty: row.qty, supplyCost: row.supplyCost, totalWithVat: row.totalWithVat, paid: row.paid, note: row.note })) } },
     goals: { createMany: { data: goals.map((goal) => ({ scope: goal.scope as GoalScope, label: goal.label, targetRevenue: goal.targetRevenue, targetMarginRate: goal.targetMarginRate ?? null })) } },
     costMasters: { createMany: { data: costMasters.map((row) => ({ keyword: row.keyword, category: row.category ?? '', unitCost: row.unitCost, packageCost: row.packageCost ?? 0, logisticsCost: row.logisticsCost ?? 0, memo: row.memo ?? '', priority: row.priority ?? 100 })) } },
-    inventoryPositions: { createMany: { data: (excelInventory.length ? excelInventory : inventoryPositions).map((row) => ({ skuKeyword: row.skuKeyword, category: row.category ?? '', onHandQty: row.onHandQty, reservedQty: row.reservedQty ?? 0, unitCost: row.unitCost, memo: row.memo ?? '' })) } },
+    inventoryPositions: { createMany: { data: [] } },
     monthlyTargets: { createMany: { data: monthlyTargets.map((row) => ({ scope: row.scope, label: row.label, monthKey: normalizeMonth(row.month), targetRevenue: row.targetRevenue })) } },
     channelFeeRules: { createMany: { data: channelFeeRules.map((row) => ({ channel: row.channel, baseRate: row.baseRate, extraRate: row.extraRate ?? 0, fixedFee: row.fixedFee ?? 0, note: row.note ?? '' })) } },
     mediaSources: { createMany: { data: mediaSources.map((row) => ({ media: row.media, sourceType: row.sourceType, accountId: row.accountId ?? '', enabled: row.enabled ?? true, note: row.note ?? '' })) } }
@@ -126,7 +127,7 @@ export async function importScoreboardWorkbook(
   });
   debugLog(`create ok batchId=${batch.id}`);
   try {
-    await rebuildSalesFactFromBatch(batch);
+    await rebuildSalesFactFromBatch(batch, commissionChannelCount > 0 ? channelCommissionRates : undefined);
     debugLog('SalesFact rebuild ok');
   } catch (e) {
     debugLog('SalesFact rebuild fail: ' + (e instanceof Error ? e.message : String(e)));
@@ -176,6 +177,12 @@ export async function saveCostMasters(batchId: string, costMasters: ProductCostM
     prisma.productCostMaster.deleteMany({ where: { batchId } }),
     prisma.productCostMaster.createMany({ data: costMasters.map((row) => ({ batchId, keyword: row.keyword, category: row.category ?? '', unitCost: row.unitCost, packageCost: row.packageCost ?? 0, logisticsCost: row.logisticsCost ?? 0, memo: row.memo ?? '', priority: row.priority ?? 100 })) })
   ]);
+  try {
+    const batch = await getBatch({ id: batchId });
+    if (batch) await rebuildSalesFactFromBatch(batch);
+  } catch (e) {
+    debugLog('saveCostMasters rebuild SalesFact: ' + (e instanceof Error ? e.message : String(e)));
+  }
   return getBatchDashboard(batchId);
 }
 
@@ -185,6 +192,13 @@ export async function saveInventoryPositions(batchId: string, inventoryPositions
     prisma.inventoryPosition.createMany({ data: inventoryPositions.map((row) => ({ batchId, skuKeyword: row.skuKeyword, category: row.category ?? '', onHandQty: row.onHandQty, reservedQty: row.reservedQty ?? 0, unitCost: row.unitCost, memo: row.memo ?? '' })) })
   ]);
   return getBatchDashboard(batchId);
+}
+
+/** 재고 전용 엑셀 파일 업로드: 파싱 후 지정 배치의 재고를 교체하고 대시보드 데이터 반환 */
+export async function importInventoryFromBuffer(batchId: string, buffer: ArrayBuffer): Promise<PersistedDashboardResponse | null> {
+  const positions = parseInventoryFromBuffer(buffer);
+  debugLog(`inventory upload batchId=${batchId} parsed=${positions.length}`);
+  return saveInventoryPositions(batchId, positions);
 }
 
 export async function saveMonthlyTargets(batchId: string, monthlyTargets: MonthlyTargetRow[]) {
